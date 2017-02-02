@@ -25,6 +25,8 @@ $ErrorActionPreference = "Stop"
 $params = Parse-Args $args;
 
 $days_of_week = Get-AnsibleParam $params -name "days_of_week"
+$interval = Get-Attr $params -name "interval" -default $null
+$interval_unit = Get-Attr $params -name "interval_unit" -default minutes
 $enabled = Get-AnsibleParam $params -name "enabled" -default $true
 $enabled = $enabled | ConvertTo-Bool
 $description = Get-AnsibleParam $params -name "description" -default " "
@@ -54,6 +56,18 @@ if ($frequency -eq "weekly")
         Fail-Json $result "missing required argument: days_of_week"
     }
 }
+elseif ($frequency -eq "interval")
+{
+    if (!($interval))
+    {
+        Fail-Json $result "missing required argument: interval"
+    }
+
+    if ($interval_unit -ne "seconds" -and $interval_unit -ne "minutes" -and $interval_unit -ne "hours" -and $interval_unit -ne "days")
+    {
+        Fail-Json $result "argument interval_unit must be seconds, minutes, hours, or days"
+    }
+}
 
 if ($path)
 {
@@ -65,7 +79,7 @@ else
 }
 
 try {
-    $task = Get-ScheduledTask -TaskPath "$path" | Where-Object {$_.TaskName -eq "$name"}
+    $task = Get-ScheduledTask -TaskPath "$path" -TaskName "$name"
 
     # Correlate task state to enable variable, used to calculate if state needs to be changed
     $taskState = if ($task) { $task.State } else { $null }
@@ -99,14 +113,20 @@ try {
     Set-Attr $result "exists" "$exists"
 
     if ($frequency){
-        if ($frequency -eq "daily") {
+        if ( $frequency -eq "interval"){
+            $trigger = New-ScheduledTaskTrigger -Once -RepetitionInterval (iex $("new-timespan -$interval_unit $interval")) -At $time -RepetitionDuration ([timespan]::MaxValue)
+        }
+        elseif ( $frequency -eq "hourly"){
+            $trigger = New-ScheduledTaskTrigger -Once -RepetitionInterval (new-timespan -hour 1) -At $time -RepetitionDuration ([timespan]::MaxValue)
+        }
+        elseif ($frequency -eq "daily") {
             $trigger =  New-ScheduledTaskTrigger -Daily -At $time
         }
         elseif ($frequency -eq "weekly"){
             $trigger =  New-ScheduledTaskTrigger -Weekly -At $time -DaysOfWeek $days_of_week
         }
         else {
-            Fail-Json $result "frequency must be daily or weekly"
+            Fail-Json $result "frequency must be interval, hourly, daily or weekly"
         }
     }
 
@@ -144,16 +164,10 @@ try {
         $result.changed = $true
     }
     elseif( ($state -eq "present") -and ($exists -eq $true) ) {
-        if ($task.Description -eq $description -and $task.TaskName -eq $name -and $task.TaskPath -eq $path -and $task.Actions.Execute -eq $execute -and $taskState -eq $enabled -and $task.Principal.UserId -eq $user) {
-            #No change in the task
-            Set-Attr $result "msg" "No change in task $name"
-        }
-        else {
-            Unregister-ScheduledTask -TaskName $name -Confirm:$false
-            Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $name -Description $description -TaskPath $path -Settings $settings -Principal $principal
-            Set-Attr $result "msg" "Updated task $name"
-            $result.changed = $true
-        }
+        Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $name -Description $description -TaskPath $path -Settings $settings -Principal $principal
+        Set-Attr $result "msg" "Updated task $name"
+        $result.changed = $true
     }
 
     Exit-Json $result;

@@ -71,6 +71,8 @@ options:
       - The frequency of the command, not idempotent
     required: false
     choices:
+      - interval
+      - hourly
       - daily
       - weekly
   time:
@@ -81,6 +83,14 @@ options:
     description:
       - Days of the week to run a weekly task, not idempotent
     required: false
+  interval:
+    description:
+      - When frequency is set to interval, time between executions, units are set by "interval_unit"
+    required: false
+  interval_unit:
+    description:
+      - Unit of time between interval, can be seconds, minutes, hours, days
+    default: minutes
   path:
     description:
       - Task folder in which this task will be stored
@@ -99,4 +109,17 @@ EXAMPLES = r'''
     enable: yes
     state: present
     user: SYSTEM
+
+# create an interval task to run every 12 minutes starting at 2pm
+- win_scheduled_task:
+    name: IntervalTask
+    execute: cmd
+    frequency: interval
+    interval: 12
+    time: 2pm
+    path: example
+    enable: yes
+    state: present
+    user: SYSTEM
+
 '''
