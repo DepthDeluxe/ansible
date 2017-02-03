@@ -3,6 +3,7 @@
 #
 # Copyright 2015, Peter Mounce <public@neverrunwithscissors.com>
 # Michael Perzel <michaelperzel@gmail.com>
+# Colin Heinzmann <colin@heinzmann.me>
 #
 # Ansible is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,19 +23,21 @@ $ErrorActionPreference = "Stop"
 # WANT_JSON
 # POWERSHELL_COMMON
 
-$params = Parse-Args $args;
+$params = Parse-Args $args -supports_check_mode $true
+$check_mode = Get-AnsibleParam -obj $params -name "_ansible_check_mode" -type "bool" -default $false
 
 $days_of_week = Get-AnsibleParam $params -name "days_of_week"
-$interval = Get-Attr $params -name "interval" -default $null
-$interval_unit = Get-Attr $params -name "interval_unit" -default minutes
+$interval = Get-AnsibleParam -obj $params -name "interval" -type "int" -default $null
+$interval_unit = Get-AnsibleParam -obj $params -name "interval_unit" -type "str" -default "minutes"
 $enabled = Get-AnsibleParam $params -name "enabled" -default $true
 $enabled = $enabled | ConvertTo-Bool
 $description = Get-AnsibleParam $params -name "description" -default " "
 $path = Get-AnsibleParam $params -name "path" -type "path"
 $argument = Get-AnsibleParam $params -name "argument"
 
-$result = New-Object PSObject;
-Set-Attr $result "changed" $false;
+$result = @{
+  changed = $false
+}
 
 #Required vars
 $name = Get-AnsibleParam -obj $params -name name -failifempty $true -resultobj $result
@@ -51,14 +54,14 @@ $user = Get-AnsibleParam -obj $params -name user -failifempty $present_args_requ
 # Mandatory Vars
 if ($frequency -eq "weekly")
 {
-    if (!($days_of_week))
+    if (-not $days_of_week)
     {
         Fail-Json $result "missing required argument: days_of_week"
     }
 }
 elseif ($frequency -eq "interval")
 {
-    if (!($interval))
+    if (-not $interval)
     {
         Fail-Json $result "missing required argument: interval"
     }
@@ -99,7 +102,7 @@ try {
         $exists = $true
     }
     elseif ( ($measure.count -eq 0) -and ($state -eq "absent") ){
-        Set-Attr $result "msg" "Task does not exist"
+        $result.msg = "Task does not exist"
         Exit-Json $result
     }
     elseif ($measure.count -eq 0){
@@ -110,7 +113,7 @@ try {
         Fail-Json $result "$($measure.count) scheduled tasks found"
     }
 
-    Set-Attr $result "exists" "$exists"
+    $result.exists = $exists
 
     if ($frequency){
         if ( $frequency -eq "interval"){
@@ -131,13 +134,15 @@ try {
     }
 
     if ( ($state -eq "absent") -and ($exists -eq $true) ) {
-        Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        if ($check_mode -ne $true) {
+          Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        }
         $result.changed = $true
-        Set-Attr $result "msg" "Deleted task $name"
+        $result.msg = "Deleted task $name"
         Exit-Json $result
     }
     elseif ( ($state -eq "absent") -and ($exists -eq $false) ) {
-        Set-Attr $result "msg" "Task $name does not exist"
+        $result.msg = "Task $name does not exist"
         Exit-Json $result
     }
 
@@ -158,15 +163,20 @@ try {
     }
 
     if ( ($state -eq "present") -and ($exists -eq $false) ){
-        Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $name -Description $description -TaskPath $path -Settings $settings -Principal $principal
-        $task = Get-ScheduledTask -TaskName $name
-        Set-Attr $result "msg" "Added new task $name"
+        if ($check_mode -ne $true) {
+          Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $name -Description $description -TaskPath $path -Settings $settings -Principal $principal
+          $task = Get-ScheduledTask -TaskPath "$path" -TaskName "$name"
+        }
+        $result.msg = "Added new task $name"
         $result.changed = $true
     }
     elseif( ($state -eq "present") -and ($exists -eq $true) ) {
-        Unregister-ScheduledTask -TaskName $name -Confirm:$false
-        Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $name -Description $description -TaskPath $path -Settings $settings -Principal $principal
-        Set-Attr $result "msg" "Updated task $name"
+        if ($check_mode -ne $true) {
+          Unregister-ScheduledTask -TaskPath "$path" -TaskName "$name" -Confirm:$false
+          Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $name -Description $description -TaskPath $path -Settings $settings -Principal $principal
+          $task = Get-ScheduledTask -TaskPath "$path" -TaskName "$name"
+        }
+        $result.msg = "Updated task $name"
         $result.changed = $true
     }
 
